@@ -401,31 +401,31 @@ if (isset($_POST['action']) || isset($_GET['action'])) {
 
                     case 'bulk_apply_margin':
                         handleBulkApplyMargin();
-                    break;
+                        break;
 
-                case 'get_dashboard_stats':
-                    handleGetDashboardStats();
-                    break;
+                    case 'get_dashboard_stats':
+                        handleGetDashboardStats();
+                        break;
 
-                case 'get_pricing_data':
-                    handleGetPricingData();
-                    break;
+                    case 'get_pricing_data':
+                        handleGetPricingData();
+                        break;
 
-                case 'get_domain_pricing':
-                    handleGetDomainPricing();
-                    break;
+                    case 'get_domain_pricing':
+                        handleGetDomainPricing();
+                        break;
 
-                case 'save_settings':
-                    handleSaveSettings();
-                    break;
+                    case 'save_settings':
+                        handleSaveSettings();
+                        break;
 
-                case 'get_logs':
-                    handleGetLogs();
-                    break;
+                    case 'get_logs':
+                        handleGetLogs();
+                        break;
 
-                default:
-                    echo json_encode(['success' => false, 'message' => 'Unknown operation: ' . $operation]);
-            }
+                    default:
+                        echo json_encode(['success' => false, 'message' => 'Unknown operation: ' . $operation]);
+                }
             } catch (Exception $e) {
                 echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
             }
@@ -1298,7 +1298,7 @@ function handleGetDashboardStats() {
         if (class_exists('WHMCS\Database\Capsule\Manager')) {
             $stats['total_domains'] = \WHMCS\Database\Capsule\Manager::table('tbldomainpricing')->count();
         } else {
-            $result = select_query('tbldomainpricing', 'COUNT(*) as total');
+            $result = select_query('tbldomainpricing', 'COUNT(*) as total', '');
             $row = mysql_fetch_array($result);
             $stats['total_domains'] = $row['total'];
         }
