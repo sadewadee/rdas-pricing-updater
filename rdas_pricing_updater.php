@@ -8,7 +8,7 @@
  * @author     Sadewadee
  * @copyright  2024 MORDEHOST.COM
  * @license    MIT
- * @version 2.2.0
+ * @version 2.2.1
  * @link       https://mordehost.com
  */
 
@@ -26,7 +26,7 @@ function rdas_pricing_updater_config() {
     return array(
         'name' => 'RDAS Domain Price Updater',
         'description' => 'Automatically updates domain pricing in WHMCS based on RDASH.ID API with configurable margin and rounding rules.',
-        'version' => '2.2.0',
+        'version' => '2.2.1',
         'author' => 'Mordenhost',
         'language' => 'english',
         'fields' => array(
@@ -177,8 +177,17 @@ function rdas_pricing_updater_output($vars) {
         exit;
     }
 
-    // Page routing
+    // Page routing - Whitelist allowed pages for security
+    $allowedPages = ['dashboard', 'settings', 'pricing', 'api_test', 'logs'];
     $page = $_REQUEST['page'] ?? 'dashboard';
+
+    // Validate page against whitelist to prevent path traversal
+    if (!in_array($page, $allowedPages, true)) {
+        $page = 'dashboard';
+    }
+
+    // Use basename for additional security
+    $page = basename($page);
 
     // Include and render appropriate page
     $pageFile = __DIR__ . '/pages/' . $page . '.php';
@@ -369,6 +378,16 @@ if (isset($_POST['action']) || isset($_GET['action'])) {
                     strpos($requestUri, 'module=mordenpricingupdater') !== false));
 
     if ($isAddonPage) {
+        // CSRF Token Validation for all POST requests
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $nonce = $_POST['nonce'] ?? '';
+            if (!rdasValidateCSRFToken($nonce, 'admin')) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'message' => 'Invalid security token. Please refresh the page.']);
+                exit;
+            }
+        }
+
         $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
         // Handle action=ajax with operation parameter (used by pricing page)

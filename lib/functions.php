@@ -189,16 +189,17 @@ function rdasFetchDomainPrices($apiUrl) {
     try {
         // Initialize cURL
         $ch = curl_init();
-        
-        // Set cURL options
+
+        // Set cURL options with SSL verification enabled
         curl_setopt_array($ch, [
             CURLOPT_URL => $apiUrl,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_TIMEOUT => 30,
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_SSL_VERIFYPEER => false,
-            CURLOPT_USERAGENT => 'WHMCS-RDAS-Pricing-Updater/2.0.0',
+            CURLOPT_SSL_VERIFYPEER => true,
+            CURLOPT_SSL_VERIFYHOST => 2,
+            CURLOPT_USERAGENT => 'WHMCS-RDAS-Pricing-Updater/2.2.0',
             CURLOPT_HTTPHEADER => [
                 'Accept: application/json',
                 'Content-Type: application/json',
@@ -490,29 +491,27 @@ function rdasUpdateDomainPricing($extension, $prices, $group = null) {
  */
 function rdasGetDomainId($extension) {
     try {
-        // Sanitize extension to prevent SQL injection
-        $extension = mysql_real_escape_string(trim($extension));
+        // Sanitize extension - use WHMCS's select_query for safety
+        $extension = trim($extension);
 
-        // First, try to get the ID that already has pricing entries
-        // This handles cases where there are duplicate extensions
-        $query = "SELECT d.id FROM tbldomainpricing d
-                  INNER JOIN tblpricing p ON p.relid = d.id AND p.type = 'domainregister'
-                  WHERE d.extension = '{$extension}'
-                  LIMIT 1";
-        $result = full_query($query);
+        // Use select_query with array WHERE clause for parameterized safety
+        $result = select_query('tbldomainpricing', 'id', ['extension' => $extension]);
 
         if ($result && mysql_num_rows($result) > 0) {
             $row = mysql_fetch_array($result);
-            return intval($row['id']);
-        }
+            $domainId = intval($row['id']);
 
-        // Fallback: just get the first ID found
-        $query = "SELECT id FROM tbldomainpricing WHERE extension = '{$extension}' LIMIT 1";
-        $result = full_query($query);
+            // Check if this domain has pricing entries
+            $pricingResult = select_query('tblpricing', 'id', [
+                'type' => 'domainregister',
+                'relid' => $domainId
+            ]);
 
-        if ($result && mysql_num_rows($result) > 0) {
-            $row = mysql_fetch_array($result);
-            return intval($row['id']);
+            if ($pricingResult && mysql_num_rows($pricingResult) > 0) {
+                return $domainId;
+            }
+
+            return $domainId;
         }
 
         return false;
@@ -563,24 +562,20 @@ function rdasCreateDomainEntry($extension) {
 function rdasUpdateDomainGroup($domainId, $group) {
     try {
         $domainId = intval($domainId);
-        $group = mysql_real_escape_string(trim($group));
+        $group = trim($group);
 
-        // First get the extension for this domain
-        $getExtensionQuery = "SELECT extension FROM tbldomainpricing WHERE id = {$domainId} LIMIT 1";
-        $extResult = full_query($getExtensionQuery);
+        // First get the extension for this domain using safe query
+        $result = select_query('tbldomainpricing', 'extension', ['id' => $domainId]);
 
-        if ($extResult && mysql_num_rows($extResult) > 0) {
-            $extRow = mysql_fetch_array($extResult);
-            $extension = mysql_real_escape_string($extRow['extension']);
+        if ($result && mysql_num_rows($result) > 0) {
+            $row = mysql_fetch_array($result);
+            $extension = $row['extension'];
 
-            // Update ALL entries with this extension (handles duplicates)
-            $query = "UPDATE tbldomainpricing SET `group` = '{$group}' WHERE extension = '{$extension}'";
-            $result = full_query($query);
+            // Update ALL entries with this extension using safe update_query
+            update_query('tbldomainpricing', ['group' => $group], ['extension' => $extension]);
 
-            if ($result) {
-                rdasLogToAddon('info', "Updated group to '{$group}' for {$extension}");
-                return true;
-            }
+            rdasLogToAddon('info', "Updated group to '{$group}' for {$extension}");
+            return true;
         }
 
         return false;
@@ -603,7 +598,7 @@ function rdasUpdateDomainGroup($domainId, $group) {
 function rdasUpdateDomainPriceEntry($domainId, $type, $year, $price) {
     try {
         // WHMCS 8/9 structure - use tblpricing table
-        // Map year to column name
+        // Map year to column name - validated through whitelist
         $yearColumnMap = [
             1 => 'msetupfee',
             2 => 'qsetupfee',
@@ -617,7 +612,13 @@ function rdasUpdateDomainPriceEntry($domainId, $type, $year, $price) {
             10 => 'biennially'
         ];
 
-        $column = $yearColumnMap[$year] ?? 'msetupfee';
+        // Validate year and get column name
+        $year = intval($year);
+        if (!isset($yearColumnMap[$year])) {
+            $year = 1;
+        }
+        $column = $yearColumnMap[$year];
+
         $domainId = intval($domainId);
         $price = floatval($price);
         $currency = 1; // Default currency
@@ -625,27 +626,45 @@ function rdasUpdateDomainPriceEntry($domainId, $type, $year, $price) {
         // Map type to tblpricing type - validate to prevent SQL injection
         $allowedTypes = ['domainregister', 'domainrenew', 'domaintransfer'];
         $pricingType = 'domain' . $type;
-        if (!in_array($pricingType, $allowedTypes)) {
+        if (!in_array($pricingType, $allowedTypes, true)) {
             throw new Exception('Invalid pricing type');
         }
 
-        // Check if pricing entry exists - include currency in check
-        $checkQuery = "SELECT id FROM tblpricing WHERE type = '{$pricingType}' AND relid = {$domainId} AND currency = {$currency} LIMIT 1";
-        $existing = full_query($checkQuery);
+        // Check if pricing entry exists using safe query
+        $existing = select_query('tblpricing', 'id', [
+            'type' => $pricingType,
+            'relid' => $domainId,
+            'currency' => $currency
+        ]);
 
         if ($existing && mysql_num_rows($existing) > 0) {
-            // Update existing
+            // Update existing using WHMCS function
             $row = mysql_fetch_array($existing);
             $pricingId = intval($row['id']);
 
-            $updateQuery = "UPDATE tblpricing SET {$column} = {$price} WHERE id = {$pricingId}";
-            full_query($updateQuery);
+            update_query('tblpricing', [$column => $price], ['id' => $pricingId]);
 
             rdasLogToAddon('info', "Updated {$pricingType} year {$year} ({$column}) = {$price} for domain ID {$domainId}");
         } else {
-            // Insert new pricing entry
-            $insertQuery = "INSERT INTO tblpricing (type, currency, relid, {$column}) VALUES ('{$pricingType}', {$currency}, {$domainId}, {$price})";
-            full_query($insertQuery);
+            // Insert new pricing entry using WHMCS function
+            insert_query('tblpricing', [
+                'type' => $pricingType,
+                'currency' => $currency,
+                'relid' => $domainId,
+                $column => $price,
+                'msetupfee' => $column === 'msetupfee' ? $price : -1,
+                'qsetupfee' => $column === 'qsetupfee' ? $price : -1,
+                'ssetupfee' => $column === 'ssetupfee' ? $price : -1,
+                'asetupfee' => $column === 'asetupfee' ? $price : -1,
+                'bsetupfee' => $column === 'bsetupfee' ? $price : -1,
+                'tsetupfee' => 0,
+                'monthly' => $column === 'monthly' ? $price : -1,
+                'quarterly' => $column === 'quarterly' ? $price : -1,
+                'semiannually' => $column === 'semiannually' ? $price : -1,
+                'annually' => $column === 'annually' ? $price : -1,
+                'biennially' => $column === 'biennially' ? $price : -1,
+                'triennially' => 0
+            ]);
 
             rdasLogToAddon('info', "Inserted {$pricingType} year {$year} ({$column}) = {$price} for domain ID {$domainId}");
         }
