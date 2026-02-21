@@ -304,30 +304,60 @@ function getLogDetails($log_id) {
 function renderLogsTemplate($vars) {
     ob_start();
     ?>
-    <div class="rdas-logs-container">
+    <div class="rdas-pricing-updater">
         <!-- Page Header -->
-        <div class="row">
-            <div class="col-md-12">
-                <div class="panel panel-default">
-                    <div class="panel-heading">
-                        <h3 class="panel-title">
-                            <i class="fa fa-list-alt"></i> RDAS Pricing Updater Logs
-                        </h3>
-                        <div class="panel-actions">
-                            <button type="button" class="btn btn-sm btn-info" id="refresh-logs-btn">
-                                <i class="fa fa-refresh"></i> Refresh
-                            </button>
-                            <button type="button" class="btn btn-sm btn-success" id="export-logs-btn">
-                                <i class="fa fa-download"></i> Export
-                            </button>
-                            <button type="button" class="btn btn-sm btn-danger" id="clear-logs-btn">
-                                <i class="fa fa-trash"></i> Clear All
-                            </button>
-                        </div>
-                    </div>
+        <div class="rdas-page-header">
+            <h1 class="rdas-page-title">
+                <div class="rdas-page-title-icon">
+                    <i class="fa fa-history"></i>
                 </div>
+                Logs
+            </h1>
+            <div class="rdas-page-actions">
+                <button type="button" class="rdas-btn rdas-btn-ghost rdas-theme-toggle" title="Toggle Dark Mode">
+                    <i class="fa fa-moon"></i>
+                </button>
             </div>
         </div>
+
+        <!-- Navigation Tabs -->
+        <nav class="rdas-nav-tabs">
+            <a href="<?php echo $vars['modulelink']; ?>&page=dashboard" class="rdas-nav-tab">
+                <i class="fa fa-home"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="<?php echo $vars['modulelink']; ?>&page=pricing" class="rdas-nav-tab">
+                <i class="fa fa-list-alt"></i>
+                <span>Pricing</span>
+            </a>
+            <a href="<?php echo $vars['modulelink']; ?>&page=settings" class="rdas-nav-tab">
+                <i class="fa fa-cog"></i>
+                <span>Settings</span>
+            </a>
+            <a href="<?php echo $vars['modulelink']; ?>&page=api_test" class="rdas-nav-tab">
+                <i class="fa fa-plug"></i>
+                <span>API Test</span>
+            </a>
+            <a href="<?php echo $vars['modulelink']; ?>&page=logs" class="rdas-nav-tab active">
+                <i class="fa fa-history"></i>
+                <span>Logs</span>
+            </a>
+        </nav>
+
+        <!-- Quick Actions -->
+        <div class="rdas-quick-actions">
+            <button type="button" class="rdas-btn rdas-btn-secondary" id="refresh-logs-btn">
+                <i class="fa fa-refresh"></i> Refresh
+            </button>
+            <button type="button" class="rdas-btn rdas-btn-secondary" id="export-logs-btn">
+                <i class="fa fa-download"></i> Export
+            </button>
+            <button type="button" class="rdas-btn rdas-btn-danger" id="clear-logs-btn">
+                <i class="fa fa-trash"></i> Clear All
+            </button>
+        </div>
+
+        <div class="rdas-logs-container">
 
         <!-- Log Statistics -->
         <div class="row">
@@ -524,6 +554,7 @@ function renderLogsTemplate($vars) {
                 </div>
             </div>
         </div>
+        </div>
     </div>
 
     <!-- Log Details Modal -->
@@ -702,6 +733,17 @@ function renderLogsTemplate($vars) {
             };
             return text.replace(/[&<>"']/g, function(m) { return map[m]; });
         }
+
+        // Theme toggle
+        $('.rdas-theme-toggle').on('click', function() {
+            $('.rdas-pricing-updater').toggleClass('rdas-dark');
+            var icon = $(this).find('i');
+            if ($('.rdas-pricing-updater').hasClass('rdas-dark')) {
+                icon.removeClass('fa-moon').addClass('fa-sun');
+            } else {
+                icon.removeClass('fa-sun').addClass('fa-moon');
+            }
+        });
     });
     </script>
 
@@ -736,7 +778,7 @@ function renderLogsTemplate($vars) {
     }
 
     .stat-value {
-        font-size: 24px;
+        font-size: 2.4rem;
         font-weight: bold;
         color: #337ab7;
     }
@@ -754,7 +796,7 @@ function renderLogsTemplate($vars) {
     }
 
     .stat-label {
-        font-size: 12px;
+        font-size: 1.2rem;
         color: #777;
         text-transform: uppercase;
         margin-top: 5px;

@@ -123,24 +123,54 @@ function testApiConnection($params) {
 function renderApiTestTemplate($vars) {
     ob_start();
     ?>
-    <div class="rdas-api-test-container">
+    <div class="rdas-pricing-updater">
         <!-- Page Header -->
-        <div class="row">
-            <div class="col-md-12">
-                <div class="panel panel-default">
-                    <div class="panel-heading">
-                        <h3 class="panel-title">
-                            <i class="fa fa-plug"></i> RDAS API Connection Test
-                        </h3>
-                        <div class="panel-actions">
-                            <button type="button" class="btn btn-sm btn-info" id="load-settings-btn">
-                                <i class="fa fa-refresh"></i> Load Current Settings
-                            </button>
-                        </div>
-                    </div>
+        <div class="rdas-page-header">
+            <h1 class="rdas-page-title">
+                <div class="rdas-page-title-icon">
+                    <i class="fa fa-plug"></i>
                 </div>
+                API Test
+            </h1>
+            <div class="rdas-page-actions">
+                <button type="button" class="rdas-btn rdas-btn-ghost rdas-theme-toggle" title="Toggle Dark Mode">
+                    <i class="fa fa-moon"></i>
+                </button>
             </div>
         </div>
+
+        <!-- Navigation Tabs -->
+        <nav class="rdas-nav-tabs">
+            <a href="<?php echo $vars['modulelink']; ?>&page=dashboard" class="rdas-nav-tab">
+                <i class="fa fa-home"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="<?php echo $vars['modulelink']; ?>&page=pricing" class="rdas-nav-tab">
+                <i class="fa fa-list-alt"></i>
+                <span>Pricing</span>
+            </a>
+            <a href="<?php echo $vars['modulelink']; ?>&page=settings" class="rdas-nav-tab">
+                <i class="fa fa-cog"></i>
+                <span>Settings</span>
+            </a>
+            <a href="<?php echo $vars['modulelink']; ?>&page=api_test" class="rdas-nav-tab active">
+                <i class="fa fa-plug"></i>
+                <span>API Test</span>
+            </a>
+            <a href="<?php echo $vars['modulelink']; ?>&page=logs" class="rdas-nav-tab">
+                <i class="fa fa-history"></i>
+                <span>Logs</span>
+            </a>
+        </nav>
+
+        <!-- Quick Actions -->
+        <div class="rdas-quick-actions">
+            <button type="button" class="rdas-btn rdas-btn-secondary" id="load-settings-btn">
+                <i class="fa fa-refresh"></i> Load Current Settings
+            </button>
+        </div>
+
+        <div class="rdas-api-test-container">
 
         <!-- Test Form -->
         <div class="row">
@@ -309,6 +339,7 @@ function renderApiTestTemplate($vars) {
                     </div>
                 </div>
             </div>
+        </div>
         </div>
     </div>
 
@@ -497,6 +528,17 @@ function renderApiTestTemplate($vars) {
             var i = Math.floor(Math.log(bytes) / Math.log(k));
             return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
         }
+
+        // Theme toggle
+        $('.rdas-theme-toggle').on('click', function() {
+            $('.rdas-pricing-updater').toggleClass('rdas-dark');
+            var icon = $(this).find('i');
+            if ($('.rdas-pricing-updater').hasClass('rdas-dark')) {
+                icon.removeClass('fa-moon').addClass('fa-sun');
+            } else {
+                icon.removeClass('fa-sun').addClass('fa-moon');
+            }
+        });
     });
     </script>
 
@@ -512,30 +554,30 @@ function renderApiTestTemplate($vars) {
     }
 
     .stat-value {
-        font-size: 18px;
+        font-size: 1.8rem;
         font-weight: bold;
         color: #337ab7;
     }
 
     .stat-label {
-        font-size: 12px;
+        font-size: 1.2rem;
         color: #777;
         text-transform: uppercase;
     }
 
     .help-block {
         color: #737373;
-        font-size: 12px;
+        font-size: 1.2rem;
     }
 
     .panel-title {
-        font-size: 16px;
+        font-size: 1.6rem;
         font-weight: bold;
     }
 
     .btn-lg {
         padding: 10px 30px;
-        font-size: 16px;
+        font-size: 1.6rem;
     }
 
     pre {

@@ -527,10 +527,10 @@ function renderDashboardTemplate($vars) {
                         <span class="rdas-price"><?php echo round($vars['system_health']['memory_usage'] / 1024 / 1024, 2); ?>MB</span>
                     </div>
                     <div class="rdas-mt-2">
-                        <span class="rdas-text-muted" style="font-size: 0.75rem;">Database Tables</span>
+                        <span class="rdas-text-muted" style="font-size: 1.2rem;">Database Tables</span>
                         <div class="rdas-flex rdas-gap-1 rdas-mt-1" style="flex-wrap: wrap;">
                             <?php foreach($vars['system_health']['addon_tables'] as $table => $exists): ?>
-                            <span class="rdas-status <?php echo $exists ? 'rdas-status-active' : 'rdas-status-error'; ?>" style="font-size: 0.6875rem;">
+                            <span class="rdas-status <?php echo $exists ? 'rdas-status-active' : 'rdas-status-error'; ?>" style="font-size: 1.1rem;">
                                 <?php echo $exists ? '✓' : '✗'; ?> <?php echo str_replace('mod_rdas_', '', $table); ?>
                             </span>
                             <?php endforeach; ?>
@@ -625,8 +625,8 @@ function renderDashboardTemplate($vars) {
                     <div class="rdas-flex-between rdas-mb-2" style="padding: var(--rdas-space-sm) 0; border-bottom: 1px solid var(--rdas-border-light);">
                         <span class="rdas-tld"><?php echo $tld; ?></span>
                         <div class="rdas-text-right">
-                            <div class="rdas-price" style="font-size: 0.875rem;">Rp <?php echo number_format($prices['register']); ?></div>
-                            <div class="rdas-text-muted" style="font-size: 0.6875rem;">/year</div>
+                            <div class="rdas-price" style="font-size: 1.4rem;">Rp <?php echo number_format($prices['register']); ?></div>
+                            <div class="rdas-text-muted" style="font-size: 1.1rem;">/year</div>
                         </div>
                     </div>
                     <?php endforeach; ?>

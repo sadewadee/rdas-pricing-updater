@@ -210,27 +210,57 @@ function saveAddonConfigValue($key, $value) {
 function renderSettingsTemplate($vars) {
     ob_start();
     ?>
-    <div class="rdas-settings-container">
+    <div class="rdas-pricing-updater">
         <!-- Page Header -->
-        <div class="row">
-            <div class="col-md-12">
-                <div class="panel panel-default">
-                    <div class="panel-heading">
-                        <h3 class="panel-title">
-                            <i class="fa fa-cogs"></i> RDAS Pricing Updater Settings
-                        </h3>
-                        <div class="panel-actions">
-                            <button type="button" class="btn btn-sm btn-info" id="test-api-btn">
-                                <i class="fa fa-plug"></i> Test API Connection
-                            </button>
-                            <button type="button" class="btn btn-sm btn-warning" id="reset-settings-btn">
-                                <i class="fa fa-refresh"></i> Reset to Defaults
-                            </button>
-                        </div>
-                    </div>
+        <div class="rdas-page-header">
+            <h1 class="rdas-page-title">
+                <div class="rdas-page-title-icon">
+                    <i class="fa fa-cogs"></i>
                 </div>
+                Settings
+            </h1>
+            <div class="rdas-page-actions">
+                <button type="button" class="rdas-btn rdas-btn-ghost rdas-theme-toggle" title="Toggle Dark Mode">
+                    <i class="fa fa-moon"></i>
+                </button>
             </div>
         </div>
+
+        <!-- Navigation Tabs -->
+        <nav class="rdas-nav-tabs">
+            <a href="<?php echo $vars['modulelink']; ?>&page=dashboard" class="rdas-nav-tab">
+                <i class="fa fa-home"></i>
+                <span>Dashboard</span>
+            </a>
+            <a href="<?php echo $vars['modulelink']; ?>&page=pricing" class="rdas-nav-tab">
+                <i class="fa fa-list-alt"></i>
+                <span>Pricing</span>
+            </a>
+            <a href="<?php echo $vars['modulelink']; ?>&page=settings" class="rdas-nav-tab active">
+                <i class="fa fa-cog"></i>
+                <span>Settings</span>
+            </a>
+            <a href="<?php echo $vars['modulelink']; ?>&page=api_test" class="rdas-nav-tab">
+                <i class="fa fa-plug"></i>
+                <span>API Test</span>
+            </a>
+            <a href="<?php echo $vars['modulelink']; ?>&page=logs" class="rdas-nav-tab">
+                <i class="fa fa-history"></i>
+                <span>Logs</span>
+            </a>
+        </nav>
+
+        <!-- Quick Actions -->
+        <div class="rdas-quick-actions">
+            <button type="button" class="rdas-btn rdas-btn-secondary" id="test-api-btn">
+                <i class="fa fa-plug"></i> Test API Connection
+            </button>
+            <button type="button" class="rdas-btn rdas-btn-secondary" id="reset-settings-btn">
+                <i class="fa fa-refresh"></i> Reset to Defaults
+            </button>
+        </div>
+
+        <div class="rdas-settings-container">
 
         <!-- Messages -->
         <?php if (!empty($vars['success_message'])): ?>
@@ -643,6 +673,7 @@ function renderSettingsTemplate($vars) {
                 </div>
             </div>
         </form>
+        </div>
     </div>
 
     <script>
@@ -721,6 +752,17 @@ function renderSettingsTemplate($vars) {
             }
         });
 
+        // Theme toggle
+        $('.rdas-theme-toggle').on('click', function() {
+            $('.rdas-pricing-updater').toggleClass('rdas-dark');
+            var icon = $(this).find('i');
+            if ($('.rdas-pricing-updater').hasClass('rdas-dark')) {
+                icon.removeClass('fa-moon').addClass('fa-sun');
+            } else {
+                icon.removeClass('fa-sun').addClass('fa-moon');
+            }
+        });
+
         // Form validation
         $('#settings-form').submit(function(e) {
             var apiUrl = $('#api_url').val();
@@ -757,17 +799,17 @@ function renderSettingsTemplate($vars) {
 
     .help-block {
         color: #737373;
-        font-size: 12px;
+        font-size: 1.2rem;
     }
 
     .panel-title {
-        font-size: 16px;
+        font-size: 1.6rem;
         font-weight: bold;
     }
 
     .btn-lg {
         padding: 10px 30px;
-        font-size: 16px;
+        font-size: 1.6rem;
     }
     </style>
     <?php
