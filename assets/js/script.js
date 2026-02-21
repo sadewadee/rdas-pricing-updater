@@ -341,18 +341,14 @@
   // ==========================================================================
 
   RDAS.initPricing = function() {
-    this.loadPricingData();
+    // Data is already rendered server-side by PHP
+    // No need to load via AJAX
   };
 
   RDAS.loadPricingData = function() {
-    this.ajaxRequest({
-      action: 'get_pricing_data',
-      success: function(response) {
-        if (response.success) {
-          RDAS.renderPricingTable(response.data);
-        }
-      }
-    });
+    // Data is rendered server-side by PHP
+    // Reload page to get fresh data
+    window.location.reload();
   };
 
   RDAS.renderPricingTable = function(data) {
@@ -457,7 +453,8 @@
       success: function(response) {
         if (response.success) {
           RDAS.showToast('success', 'Bulk Sync Complete', response.data.updated + ' domains updated');
-          RDAS.loadPricingData();
+          // Reload page to show updated data
+          setTimeout(function() { window.location.reload(); }, 1500);
         } else {
           RDAS.showToast('error', 'Bulk Sync Failed', response.message);
         }
@@ -685,7 +682,9 @@
       url: this.ajaxUrl,
       type: 'POST',
       dataType: 'json',
-      data: {},
+      data: {
+        action: 'ajax'
+      },
       beforeSend: function() {
         RDAS.isLoading = true;
       },
@@ -700,9 +699,9 @@
 
     var settings = $.extend({}, defaults, options);
 
-    // Add action to data
+    // Add operation to data (action is already set to 'ajax')
     if (settings.action) {
-      settings.data.action = settings.action;
+      settings.data.operation = settings.action;
       delete settings.action;
     }
 

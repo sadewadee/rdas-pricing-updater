@@ -8,7 +8,7 @@
  * @author     Sadewadee
  * @copyright  2024 MORDEHOST.COM
  * @license    MIT
- * @version 2.1.9
+ * @version 2.2.0
  * @link       https://mordehost.com
  */
 
@@ -26,7 +26,7 @@ function rdas_pricing_updater_config() {
     return array(
         'name' => 'RDAS Domain Price Updater',
         'description' => 'Automatically updates domain pricing in WHMCS based on RDASH.ID API with configurable margin and rounding rules.',
-        'version' => '2.1.9',
+        'version' => '2.2.0',
         'author' => 'Mordenhost',
         'language' => 'english',
         'fields' => array(
@@ -68,7 +68,7 @@ function rdas_pricing_updater_config() {
             'auto_update' => array(
                 'FriendlyName' => 'Auto Update',
                 'Type' => 'yesno',
-                'Default' => 'yes',
+                'Default' => 'on',
                 'Description' => 'Enable automatic daily price updates'
             ),
             'log_level' => array(
@@ -373,30 +373,34 @@ if (isset($_POST['action']) || isset($_GET['action'])) {
 
         // Handle action=ajax with operation parameter (used by pricing page)
         if ($action === 'ajax' && isset($_POST['operation'])) {
+            // Clean any previous output and start fresh
+            ob_clean();
             header('Content-Type: application/json');
-            $operation = $_POST['operation'];
 
-            switch ($operation) {
-                case 'test_api_connection':
-                    testApiConnection();
-                    break;
+            try {
+                $operation = $_POST['operation'];
 
-                case 'update_domain_price':
-                    handleUpdateDomainPrice();
-                    break;
+                switch ($operation) {
+                    case 'test_api_connection':
+                        testApiConnection();
+                        break;
 
-                case 'sync_domain_price':
-                case 'sync_domain':
-                    handleSyncDomainPrice();
-                    break;
+                    case 'update_domain_price':
+                        handleUpdateDomainPrice();
+                        break;
 
-                case 'bulk_sync_prices':
-                case 'bulk_sync':
-                    handleBulkSyncPrices();
-                    break;
+                    case 'sync_domain_price':
+                    case 'sync_domain':
+                        handleSyncDomainPrice();
+                        break;
 
-                case 'bulk_apply_margin':
-                    handleBulkApplyMargin();
+                    case 'bulk_sync_prices':
+                    case 'bulk_sync':
+                        handleBulkSyncPrices();
+                        break;
+
+                    case 'bulk_apply_margin':
+                        handleBulkApplyMargin();
                     break;
 
                 case 'get_dashboard_stats':
@@ -421,6 +425,9 @@ if (isset($_POST['action']) || isset($_GET['action'])) {
 
                 default:
                     echo json_encode(['success' => false, 'message' => 'Unknown operation: ' . $operation]);
+            }
+            } catch (Exception $e) {
+                echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
             }
             exit;
         }
@@ -1214,10 +1221,14 @@ function handleExportCsv() {
 
         if (class_exists('WHMCS\Database\Capsule\Manager')) {
             $domains = \WHMCS\Database\Capsule\Manager::table('tbldomainpricing')
+                ->selectRaw('MIN(id) as id, extension, MAX(autoreg) as autoreg')
+                ->groupBy('extension')
                 ->orderBy('extension')
                 ->get();
         } else {
-            $result = select_query('tbldomainpricing', '*', '', 'extension', 'ASC');
+            $result = full_query(
+                "SELECT MIN(id) as id, extension, MAX(autoreg) as autoreg, MAX(`group`) as `group` FROM tbldomainpricing GROUP BY extension ORDER BY extension ASC"
+            );
             while ($row = mysql_fetch_array($result)) {
                 $domains[] = (object) $row;
             }
@@ -1234,7 +1245,7 @@ function handleExportCsv() {
         $output = fopen('php://output', 'w');
 
         // Header row
-        fputcsv($output, ['Extension', 'Register', 'Renew', 'Transfer', 'Restore', 'Registrar']);
+        fputcsv($output, ['Extension', 'Register', 'Renew', 'Transfer', 'Restore', 'Group', 'Registrar']);
 
         // Data rows
         foreach ($domains as $domain) {
@@ -1244,6 +1255,7 @@ function handleExportCsv() {
                 $domain->renew,
                 $domain->transfer,
                 $domain->restore ?? 0,
+                $domain->group ?? '',
                 $domain->autoreg ?? 'Manual'
             ]);
         }
@@ -1328,13 +1340,18 @@ function handleGetDashboardStats() {
  * Handle Get Pricing Data
  */
 function handleGetPricingData() {
+    // Ensure clean output
+    if (ob_get_level()) {
+        ob_clean();
+    }
+
     try {
         $data = [];
 
         // Get addon config
         $config = rdasGetAddonConfig('rdas_pricing_updater');
         $marginType = $config['margin_type'] ?? 'percentage';
-        $marginValue = floatval($config['margin_value'] ?? 20);
+        $marginValue = floatval($config['profit_margin'] ?? $config['margin_value'] ?? 20);
         $roundingRule = $config['rounding_rule'] ?? 'up_1000';
         $customRounding = floatval($config['custom_rounding'] ?? 1000);
 
@@ -1350,41 +1367,78 @@ function handleGetPricingData() {
             }
         }
 
-        // WHMCS 8/9 - use tblpricing
-        $domains = select_query('tbldomainpricing', 'id, extension, autoreg', '', 'extension', 'ASC');
+        // WHMCS 8/9 - use tblpricing, GROUP BY to avoid duplicates
+        $domains = full_query(
+            "SELECT MIN(id) as id, extension, MAX(autoreg) as autoreg, MAX(`group`) as `group` FROM tbldomainpricing GROUP BY extension ORDER BY extension ASC"
+        );
         while ($domain = mysql_fetch_array($domains)) {
             $domainId = intval($domain['id']);
             $extension = $domain['extension'];
 
-            // Get current pricing from tblpricing
+            // Year column mapping for WHMCS 8/9
+            $yearColumnMap = [
+                1 => 'msetupfee',
+                2 => 'qsetupfee',
+                3 => 'ssetupfee',
+                4 => 'asetupfee',
+                5 => 'bsetupfee',
+                6 => 'monthly',
+                7 => 'quarterly',
+                8 => 'semiannually',
+                9 => 'annually',
+                10 => 'biennially'
+            ];
+
+            // First, determine promo terms from API
+            $promoTerms = 1;
+            $promoActive = false;
+
+            if (isset($apiLookup[$extension])) {
+                $apiData = $apiLookup[$extension];
+                $promoData = $apiData['promo'] ?? null;
+                if ($promoData && isset($promoData['registration']) && !empty($promoData['registration'])) {
+                    $now = time();
+                    $startDate = isset($promoData['start_date']) ? strtotime($promoData['start_date']) : null;
+                    $endDate = isset($promoData['end_date']) ? strtotime($promoData['end_date']) : null;
+
+                    if ($startDate && $endDate && $now >= $startDate && $now <= $endDate) {
+                        $promoActive = true;
+                        $promoTerms = intval($promoData['terms'] ?? 1);
+                    }
+                }
+            }
+
+            // Determine which year column to use
+            $yearColumn = $yearColumnMap[$promoTerms] ?? 'msetupfee';
+
+            // Get current pricing from tblpricing - use the correct year column
             $currentRegister = 0;
             $currentRenew = 0;
             $currentTransfer = 0;
 
             $regResult = full_query(
-                "SELECT msetupfee FROM tblpricing WHERE type='domainregister' AND relid=" . $domainId . " LIMIT 1"
+                "SELECT {$yearColumn} FROM tblpricing WHERE type='domainregister' AND relid=" . $domainId . " LIMIT 1"
             );
             if ($regRow = mysql_fetch_array($regResult)) {
-                $currentRegister = floatval($regRow['msetupfee']);
+                $currentRegister = floatval($regRow[$yearColumn]);
             }
 
             $renewResult = full_query(
-                "SELECT msetupfee FROM tblpricing WHERE type='domainrenew' AND relid=" . $domainId . " LIMIT 1"
+                "SELECT {$yearColumn} FROM tblpricing WHERE type='domainrenew' AND relid=" . $domainId . " LIMIT 1"
             );
             if ($renewRow = mysql_fetch_array($renewResult)) {
-                $currentRenew = floatval($renewRow['msetupfee']);
+                $currentRenew = floatval($renewRow[$yearColumn]);
             }
 
             $transferResult = full_query(
-                "SELECT msetupfee FROM tblpricing WHERE type='domaintransfer' AND relid=" . $domainId . " LIMIT 1"
+                "SELECT {$yearColumn} FROM tblpricing WHERE type='domaintransfer' AND relid=" . $domainId . " LIMIT 1"
             );
             if ($transferRow = mysql_fetch_array($transferResult)) {
-                $currentTransfer = floatval($transferRow['msetupfee']);
+                $currentTransfer = floatval($transferRow[$yearColumn]);
             }
 
             // Get API pricing
             $apiRegister = 0;
-            $promoActive = false;
             $promoRegister = 0;
             $promoEnd = null;
             $hasApiData = false;
@@ -1407,6 +1461,7 @@ function handleGetPricingData() {
                     // Check if promo is currently active
                     if ($startDate && $endDate && $now >= $startDate && $now <= $endDate) {
                         $promoActive = true;
+                        $promoTerms = intval($promoData['terms'] ?? 1);
                         $promoRegister = rdasParsePrice($promoData['registration']);
                         $promoEnd = $promoData['end_date'];
                     }
@@ -1422,6 +1477,7 @@ function handleGetPricingData() {
                 }
             }
 
+            // Compare promo price with current when promo is active
             $finalApiRegister = $promoActive ? $promoRegister : $apiRegister;
             $registerDiff = $hasApiData ? ($finalApiRegister - $currentRegister) : 0;
 
@@ -1433,12 +1489,15 @@ function handleGetPricingData() {
                 'current_transfer' => $currentTransfer,
                 'api_register' => $apiRegister,
                 'promo_active' => $promoActive,
+                'promo_terms' => $promoTerms,
                 'promo_register' => $promoRegister,
+                'promo_end' => $promoEnd,
                 'final_api_register' => $finalApiRegister,
                 'register_diff' => $registerDiff,
                 'has_api_data' => $hasApiData,
                 'autoreg' => $domain['autoreg'] ?? '',
-                'registrar_name' => $domain['autoreg'] ?: 'Manual'
+                'registrar_name' => $domain['autoreg'] ?: 'Manual',
+                'domain_group' => $domain['group'] ?? ''
             ];
         }
 
@@ -1475,33 +1534,21 @@ function handleGetDomainPricing() {
         if ($domain) {
             $domainId = intval($domain['id']);
 
-            // Get current pricing from tblpricing
-            $currentRegister = 0;
-            $currentRenew = 0;
-            $currentTransfer = 0;
+            // Year column mapping for WHMCS 8/9
+            $yearColumnMap = [
+                1 => 'msetupfee',
+                2 => 'qsetupfee',
+                3 => 'ssetupfee',
+                4 => 'asetupfee',
+                5 => 'bsetupfee',
+                6 => 'monthly',
+                7 => 'quarterly',
+                8 => 'semiannually',
+                9 => 'annually',
+                10 => 'biennially'
+            ];
 
-            $regResult = full_query(
-                "SELECT msetupfee FROM tblpricing WHERE type='domainregister' AND relid=" . $domainId . " LIMIT 1"
-            );
-            if ($regRow = mysql_fetch_array($regResult)) {
-                $currentRegister = floatval($regRow['msetupfee']);
-            }
-
-            $renewResult = full_query(
-                "SELECT msetupfee FROM tblpricing WHERE type='domainrenew' AND relid=" . $domainId . " LIMIT 1"
-            );
-            if ($renewRow = mysql_fetch_array($renewResult)) {
-                $currentRenew = floatval($renewRow['msetupfee']);
-            }
-
-            $transferResult = full_query(
-                "SELECT msetupfee FROM tblpricing WHERE type='domaintransfer' AND relid=" . $domainId . " LIMIT 1"
-            );
-            if ($transferRow = mysql_fetch_array($transferResult)) {
-                $currentTransfer = floatval($transferRow['msetupfee']);
-            }
-
-            // Get API pricing
+            // Get API pricing first to determine promo terms
             $config = rdasGetAddonConfig('rdas_pricing_updater');
             $apiUrl = $config['api_url'] ?? 'https://api.rdash.id/api/domain-prices?currency=IDR';
             $apiPrices = rdasFetchDomainPrices($apiUrl);
@@ -1510,7 +1557,9 @@ function handleGetDomainPricing() {
             $apiRenew = 0;
             $apiTransfer = 0;
             $promoActive = false;
+            $promoTerms = 1;
             $promoRegister = 0;
+            $promoEnd = null;
             $hasApiData = false;
 
             if ($apiPrices && is_array($apiPrices)) {
@@ -1519,7 +1568,7 @@ function handleGetDomainPricing() {
                         $hasApiData = true;
 
                         $marginType = $config['margin_type'] ?? 'percentage';
-                        $marginValue = floatval($config['margin_value'] ?? 20);
+                        $marginValue = floatval($config['profit_margin'] ?? $config['margin_value'] ?? 20);
                         $roundingRule = $config['rounding_rule'] ?? 'up_1000';
                         $customRounding = floatval($config['custom_rounding'] ?? 1000);
 
@@ -1527,10 +1576,20 @@ function handleGetDomainPricing() {
                         $apiRenew = rdasParsePrice($apiDomain['renewal'] ?? 0);
                         $apiTransfer = rdasParsePrice($apiDomain['transfer'] ?? 0);
 
-                        // Check for promo
-                        if (!empty($apiDomain['promo']['active'])) {
-                            $promoActive = true;
-                            $promoRegister = rdasParsePrice($apiDomain['promo']['price'] ?? 0);
+                        // Check for promo - API structure has promo.registration directly
+                        $promoData = $apiDomain['promo'] ?? null;
+                        if ($promoData && isset($promoData['registration']) && !empty($promoData['registration'])) {
+                            $now = time();
+                            $startDate = isset($promoData['start_date']) ? strtotime($promoData['start_date']) : null;
+                            $endDate = isset($promoData['end_date']) ? strtotime($promoData['end_date']) : null;
+
+                            // Check if promo is currently active (within date range)
+                            if ($startDate && $endDate && $now >= $startDate && $now <= $endDate) {
+                                $promoActive = true;
+                                $promoTerms = intval($promoData['terms'] ?? 1);
+                                $promoRegister = rdasParsePrice($promoData['registration']);
+                                $promoEnd = $promoData['end_date'];
+                            }
                         }
 
                         // Apply margin
@@ -1547,6 +1606,38 @@ function handleGetDomainPricing() {
                 }
             }
 
+            // Determine which year column to use based on promo terms
+            $yearColumn = $yearColumnMap[$promoTerms] ?? 'msetupfee';
+
+            // Get current pricing from tblpricing - use the correct year column
+            $currentRegister = 0;
+            $currentRenew = 0;
+            $currentTransfer = 0;
+
+            $regResult = full_query(
+                "SELECT {$yearColumn} FROM tblpricing WHERE type='domainregister' AND relid=" . $domainId . " LIMIT 1"
+            );
+            if ($regRow = mysql_fetch_array($regResult)) {
+                $currentRegister = floatval($regRow[$yearColumn]);
+            }
+
+            $renewResult = full_query(
+                "SELECT {$yearColumn} FROM tblpricing WHERE type='domainrenew' AND relid=" . $domainId . " LIMIT 1"
+            );
+            if ($renewRow = mysql_fetch_array($renewResult)) {
+                $currentRenew = floatval($renewRow[$yearColumn]);
+            }
+
+            $transferResult = full_query(
+                "SELECT {$yearColumn} FROM tblpricing WHERE type='domaintransfer' AND relid=" . $domainId . " LIMIT 1"
+            );
+            if ($transferRow = mysql_fetch_array($transferResult)) {
+                $currentTransfer = floatval($transferRow[$yearColumn]);
+            }
+
+            // Compare promo price with current when promo is active
+            $finalApiRegister = $promoActive ? $promoRegister : $apiRegister;
+
             $data = [
                 'id' => $domainId,
                 'extension' => $domain['extension'],
@@ -1557,8 +1648,10 @@ function handleGetDomainPricing() {
                 'api_renew' => $apiRenew,
                 'api_transfer' => $apiTransfer,
                 'promo_active' => $promoActive,
+                'promo_terms' => $promoTerms,
                 'promo_register' => $promoRegister,
-                'final_api_register' => $promoActive ? $promoRegister : $apiRegister,
+                'promo_end' => $promoEnd,
+                'final_api_register' => $finalApiRegister,
                 'has_api_data' => $hasApiData,
                 'autoreg' => $domain['autoreg'] ?? '',
                 'registrar_name' => $domain['autoreg'] ?: 'Manual'

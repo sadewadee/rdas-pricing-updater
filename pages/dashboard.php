@@ -234,8 +234,10 @@ function getPricingSummary() {
         $renew_prices = array();
         $popular_tlds = array('.com', '.net', '.org', '.id', '.co.id');
 
-        // WHMCS 8/9 - use tblpricing
-        $domains = select_query('tbldomainpricing', 'id, extension', '', 'extension', 'ASC');
+        // WHMCS 8/9 - use tblpricing, GROUP BY to avoid duplicates
+        $domains = full_query(
+            "SELECT MIN(id) as id, extension FROM tbldomainpricing GROUP BY extension ORDER BY extension ASC"
+        );
 
         while ($domain = mysql_fetch_array($domains)) {
             $domainId = intval($domain['id']);

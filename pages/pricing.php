@@ -62,7 +62,7 @@ function getDomainPricingData() {
         // Get addon config for margin calculation
         $config = rdasGetAddonConfig('rdas_pricing_updater');
         $marginType = $config['margin_type'] ?? 'percentage';
-        $marginValue = floatval($config['margin_value'] ?? 20);
+        $marginValue = floatval($config['profit_margin'] ?? $config['margin_value'] ?? 20);
         $roundingRule = $config['rounding_rule'] ?? 'up_1000';
         $customRounding = floatval($config['custom_rounding'] ?? 1000);
 
@@ -78,44 +78,82 @@ function getDomainPricingData() {
             }
         }
 
-        // Get all domains from WHMCS
-        $domainsResult = select_query('tbldomainpricing', 'id, extension, autoreg', '', 'extension', 'ASC');
+        // Get all domains from WHMCS - GROUP BY extension to avoid duplicates
+        $domainsResult = full_query(
+            "SELECT MIN(id) as id, extension, MAX(autoreg) as autoreg, MAX(`group`) as `group` FROM tbldomainpricing GROUP BY extension ORDER BY extension ASC"
+        );
 
         while ($domain = mysql_fetch_array($domainsResult)) {
             $domainId = intval($domain['id']);
             $extension = $domain['extension'];
+            $domainGroup = $domain['group'] ?? '';
 
-            // Get current pricing from tblpricing (WHMCS 8/9)
+            // Year column mapping for WHMCS 8/9
+            $yearColumnMap = [
+                1 => 'msetupfee',
+                2 => 'qsetupfee',
+                3 => 'ssetupfee',
+                4 => 'asetupfee',
+                5 => 'bsetupfee',
+                6 => 'monthly',
+                7 => 'quarterly',
+                8 => 'semiannually',
+                9 => 'annually',
+                10 => 'biennially'
+            ];
+
+            // First, get API data to determine promo terms
+            $promoTerms = 1;
+            $promoActive = false;
+
+            if (isset($apiLookup[$extension])) {
+                $apiData = $apiLookup[$extension];
+                $promoData = $apiData['promo'] ?? null;
+                if ($promoData && isset($promoData['registration']) && !empty($promoData['registration'])) {
+                    $now = time();
+                    $startDate = isset($promoData['start_date']) ? strtotime($promoData['start_date']) : null;
+                    $endDate = isset($promoData['end_date']) ? strtotime($promoData['end_date']) : null;
+
+                    if ($startDate && $endDate && $now >= $startDate && $now <= $endDate) {
+                        $promoActive = true;
+                        $promoTerms = intval($promoData['terms'] ?? 1);
+                    }
+                }
+            }
+
+            // Determine which year column to use for database price lookup
+            $yearColumn = $yearColumnMap[$promoTerms] ?? 'msetupfee';
+
+            // Get current pricing from tblpricing (WHMCS 8/9) - use the correct year column
             $currentRegister = 0;
             $currentRenew = 0;
             $currentTransfer = 0;
 
             $regResult = full_query(
-                "SELECT msetupfee FROM tblpricing WHERE type='domainregister' AND relid=" . $domainId . " LIMIT 1"
+                "SELECT {$yearColumn} FROM tblpricing WHERE type='domainregister' AND relid=" . $domainId . " LIMIT 1"
             );
             if ($regRow = mysql_fetch_array($regResult)) {
-                $currentRegister = floatval($regRow['msetupfee']);
+                $currentRegister = floatval($regRow[$yearColumn]);
             }
 
             $renewResult = full_query(
-                "SELECT msetupfee FROM tblpricing WHERE type='domainrenew' AND relid=" . $domainId . " LIMIT 1"
+                "SELECT {$yearColumn} FROM tblpricing WHERE type='domainrenew' AND relid=" . $domainId . " LIMIT 1"
             );
             if ($renewRow = mysql_fetch_array($renewResult)) {
-                $currentRenew = floatval($renewRow['msetupfee']);
+                $currentRenew = floatval($renewRow[$yearColumn]);
             }
 
             $transferResult = full_query(
-                "SELECT msetupfee FROM tblpricing WHERE type='domaintransfer' AND relid=" . $domainId . " LIMIT 1"
+                "SELECT {$yearColumn} FROM tblpricing WHERE type='domaintransfer' AND relid=" . $domainId . " LIMIT 1"
             );
             if ($transferRow = mysql_fetch_array($transferResult)) {
-                $currentTransfer = floatval($transferRow['msetupfee']);
+                $currentTransfer = floatval($transferRow[$yearColumn]);
             }
 
             // Get API pricing for this extension
             $apiRegister = 0;
             $apiRenew = 0;
             $apiTransfer = 0;
-            $promoActive = false;
             $promoRegister = 0;
             $promoRenew = 0;
             $promoEnd = null;
@@ -140,6 +178,7 @@ function getDomainPricingData() {
                     // Check if promo is currently active (within date range)
                     if ($startDate && $endDate && $now >= $startDate && $now <= $endDate) {
                         $promoActive = true;
+                        $promoTerms = intval($promoData['terms'] ?? 1); // Get promo terms (year)
                         $promoRegister = rdasParsePrice($promoData['registration']);
                         $promoRenew = rdasParsePrice($promoData['renewal'] ?? 0);
                         $promoEnd = $promoData['end_date'];
@@ -185,6 +224,7 @@ function getDomainPricingData() {
                 'api_transfer' => $apiTransfer,
                 // Promo info
                 'promo_active' => $promoActive,
+                'promo_terms' => $promoTerms,
                 'promo_register' => $promoRegister,
                 'promo_end' => $promoEnd,
                 'final_api_register' => $finalApiRegister,
@@ -195,6 +235,7 @@ function getDomainPricingData() {
                 // Other info
                 'autoreg' => $domain['autoreg'] ?? '',
                 'registrar_name' => $domain['autoreg'] ?: 'Manual',
+                'domain_group' => $domainGroup,
                 'has_api_data' => $hasApiData
             );
         }
@@ -457,10 +498,11 @@ function renderPricingTableTemplate($vars) {
                         <tr>
                             <th width="40"><input type="checkbox" id="select-all-header"></th>
                             <th>TLD</th>
-                            <th>Current Price<br><small style="font-weight:normal">(Database)</small></th>
-                            <th>Promo Price<br><small style="font-weight:normal">(API + Margin)</small></th>
+                            <th>Current Price</th>
+                            <th>Promo Price<br><small style="font-weight:normal">(inc + margin)</small></th>
                             <th>Price Diff</th>
                             <th>Year</th>
+                            <th>Group</th>
                             <th>Registrar</th>
                             <th width="140">Actions</th>
                         </tr>
@@ -483,7 +525,7 @@ function renderPricingTableTemplate($vars) {
                             <td>
                                 <span class="rdas-tld"><?php echo htmlspecialchars($domain['extension']); ?></span>
                                 <?php if ($domain['promo_active']): ?>
-                                <span class="rdas-promo-indicator"><i class="fa fa-tag"></i> PROMO</span>
+                                <span class="rdas-promo-indicator"><i class="fa fa-tag"></i> PROMO YR<?php echo $domain['promo_terms']; ?></span>
                                 <?php endif; ?>
                             </td>
                             <td>
@@ -495,8 +537,9 @@ function renderPricingTableTemplate($vars) {
                                     <?php if ($domain['promo_active']): ?>
                                         <span class="rdas-price-original">Rp <?php echo number_format($domain['api_register'], 0); ?></span>
                                         <span class="rdas-price-promo">Rp <?php echo number_format($domain['promo_register'], 0); ?></span>
+                                        <small class="rdas-tld-small" style="color: #e74c3c;">Promo Year <?php echo $domain['promo_terms']; ?></small>
                                         <?php if ($domain['promo_end']): ?>
-                                        <small class="rdas-promo-countdown">Until: <?php echo date('M j, Y', strtotime($domain['promo_end'])); ?></small>
+                                        <small class="rdas-promo-countdown"><i class="fa fa-clock"></i> Until: <?php echo date('M j, Y', strtotime($domain['promo_end'])); ?></small>
                                         <?php endif; ?>
                                     <?php else: ?>
                                         <span class="rdas-price">Rp <?php echo number_format($domain['api_register'], 0); ?></span>
@@ -530,7 +573,18 @@ function renderPricingTableTemplate($vars) {
                                 <?php endif; ?>
                             </td>
                             <td>
-                                <span>1 Year</span>
+                                <?php if ($domain['promo_active']): ?>
+                                    <span style="color: #e74c3c; font-weight: 600;">Year <?php echo $domain['promo_terms']; ?></span>
+                                <?php else: ?>
+                                    <span>1 Year</span>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <?php if (!empty($domain['domain_group'])): ?>
+                                    <span class="rdas-badge rdas-badge-info"><?php echo htmlspecialchars($domain['domain_group']); ?></span>
+                                <?php else: ?>
+                                    <span class="rdas-text-muted">-</span>
+                                <?php endif; ?>
                             </td>
                             <td>
                                 <span class="rdas-status <?php echo !empty($domain['autoreg']) ? 'rdas-status-active' : 'rdas-status-inactive'; ?>">
@@ -561,7 +615,7 @@ function renderPricingTableTemplate($vars) {
                         <?php endforeach; ?>
                         <?php else: ?>
                         <tr>
-                            <td colspan="8" class="rdas-text-center rdas-text-muted" style="padding: 40px;">
+                            <td colspan="9" class="rdas-text-center rdas-text-muted" style="padding: 40px;">
                                 <div class="rdas-empty">
                                     <div class="rdas-empty-icon"><i class="fa fa-table"></i></div>
                                     <div class="rdas-empty-title">No Pricing Data</div>

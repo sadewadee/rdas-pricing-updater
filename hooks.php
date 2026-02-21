@@ -3,7 +3,7 @@
  * RDAS Pricing Updater - Hooks
  *
  * @package RDAS Pricing Updater
- * @version 2.1.9
+ * @version 2.2.0
  * @author Sadewa
  * @description WHMCS hooks untuk DailyCronJob dan AdminAreaPage integration
  */
@@ -138,8 +138,8 @@ add_hook('AdminAreaHeadOutput', 1, function($vars) {
 
     $addonUrl = rtrim($GLOBALS['CONFIG']['SystemURL'] ?? '', '/') . '/modules/addons/rdas_pricing_updater';
 
-    return '<link rel="stylesheet" type="text/css" href="' . $addonUrl . '/assets/css/style.css?v=2.1.9" />' . "\n" .
-           '<script type="text/javascript" src="' . $addonUrl . '/assets/js/script.js?v=2.1.9"></script>' . "\n";
+    return '<link rel="stylesheet" type="text/css" href="' . $addonUrl . '/assets/css/style.css?v=2.2.0" />' . "\n" .
+           '<script type="text/javascript" src="' . $addonUrl . '/assets/js/script.js?v=2.2.0"></script>' . "\n";
 });
 
 /**

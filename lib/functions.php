@@ -93,7 +93,7 @@ function rdasImportDomainViaTLDSync($tld) {
         // Get addon configuration
         $config = rdasGetAddonConfig('rdas_pricing_updater');
         $marginType = $config['margin_type'] ?? 'percentage';
-        $marginValue = floatval($config['margin_value'] ?? 20);
+        $marginValue = floatval($config['profit_margin'] ?? $config['margin_value'] ?? 20);
         
         // Get WHMCS admin token
         $adminToken = rdasGetWHMCSAdminToken();
@@ -290,15 +290,18 @@ function rdasCalculateDomainPrices($domainData, $config) {
 
         // Check if promo is active
         $promoActive = false;
+        $promoTerms = 1; // Default to year 1
         $promoData = $domainData['promo'] ?? null;
 
-        if ($promoData && isset($promoData['registration'])) {
+        if ($promoData && isset($promoData['registration']) && !empty($promoData['registration'])) {
             $startDate = isset($promoData['start_date']) ? strtotime($promoData['start_date']) : null;
             $endDate = isset($promoData['end_date']) ? strtotime($promoData['end_date']) : null;
 
             // Validate promo dates
             if ($startDate && $endDate && $now >= $startDate && $now <= $endDate) {
                 $promoActive = true;
+                // Get promo terms (year) - default to 1 if not specified
+                $promoTerms = intval($promoData['terms'] ?? 1);
             }
         }
 
@@ -311,17 +314,7 @@ function rdasCalculateDomainPrices($domainData, $config) {
         ];
 
         foreach ($priceMapping as $whmcsKey => $apiKey) {
-            $basePrice = 0;
-
-            // For registration, check promo first
-            if ($whmcsKey === 'register' && $promoActive && isset($promoData['registration'])) {
-                $basePrice = rdasParsePrice($promoData['registration']);
-                $prices['promo_applied'] = true;
-                $prices['promo_start'] = $promoData['start_date'];
-                $prices['promo_end'] = $promoData['end_date'];
-            } else {
-                $basePrice = rdasParsePrice($domainData[$apiKey] ?? 0);
-            }
+            $basePrice = rdasParsePrice($domainData[$apiKey] ?? 0);
 
             // Apply margin
             if ($marginType === 'percentage') {
@@ -341,10 +334,39 @@ function rdasCalculateDomainPrices($domainData, $config) {
             ];
         }
 
+        // Handle promo price for specific terms (year)
+        if ($promoActive && isset($promoData['registration'])) {
+            $promoBasePrice = rdasParsePrice($promoData['registration']);
+
+            // Apply margin to promo price
+            if ($marginType === 'percentage') {
+                $promoFinalPrice = $promoBasePrice * (1 + ($marginValue / 100));
+            } else {
+                $promoFinalPrice = $promoBasePrice + $marginValue;
+            }
+
+            // Apply rounding to promo price
+            $promoFinalPrice = rdasApplyRounding($promoFinalPrice, $roundingRule, $customRounding);
+
+            // Store promo info separately
+            $prices['promo'] = [
+                'terms' => $promoTerms,
+                'base_price' => $promoBasePrice,
+                'final_price' => $promoFinalPrice,
+                'start_date' => $promoData['start_date'],
+                'end_date' => $promoData['end_date']
+            ];
+
+            $prices['promo_applied'] = true;
+            $prices['promo_start'] = $promoData['start_date'];
+            $prices['promo_end'] = $promoData['end_date'];
+        }
+
         // Add metadata
         $prices['extension'] = $domainData['extension'] ?? '';
         $prices['last_updated'] = date('Y-m-d H:i:s');
         $prices['promo_active'] = $promoActive;
+        $prices['promo_terms'] = $promoTerms;
 
         return $prices;
 
@@ -389,30 +411,52 @@ function rdasApplyRounding($price, $rule, $customValue = 1000) {
  *
  * @param string $extension Domain extension
  * @param array $prices Calculated prices
+ * @param string|null $group Optional group name (auto-set based on promo if not provided)
  * @return bool Success status
  */
-function rdasUpdateDomainPricing($extension, $prices) {
+function rdasUpdateDomainPricing($extension, $prices, $group = null) {
     try {
         // Get existing domain pricing
         $domainId = rdasGetDomainId($extension);
-        
+
         if (!$domainId) {
             // Create new domain entry
             $domainId = rdasCreateDomainEntry($extension);
-            
+
             if (!$domainId) {
                 throw new Exception('Failed to create domain entry for ' . $extension);
             }
         }
-        
+
+        // Get promo info if available
+        $promoActive = !empty($prices['promo_active']);
+        $promoTerms = intval($prices['promo_terms'] ?? 1);
+        $promoData = $prices['promo'] ?? null;
+
+        // Determine group - auto-set based on promo status if not provided
+        if ($group === null) {
+            $group = $promoActive ? 'Promo' : '';
+        }
+
+        // Update group in tbldomainpricing
+        rdasUpdateDomainGroup($domainId, $group);
+
         // Update pricing for each year (1-10)
         $success = true;
-        
+
         for ($year = 1; $year <= 10; $year++) {
             foreach (['register', 'renew', 'transfer'] as $type) {
                 if (isset($prices[$type])) {
-                    $result = rdasUpdateDomainPriceEntry($domainId, $type, $year, $prices[$type]['final']);
-                    
+                    // Determine the price to use for this year
+                    $priceToUse = $prices[$type]['final'];
+
+                    // If promo is active and this is the promo year for registration
+                    if ($promoActive && $year === $promoTerms && $type === 'register' && $promoData) {
+                        $priceToUse = $promoData['final_price'];
+                    }
+
+                    $result = rdasUpdateDomainPriceEntry($domainId, $type, $year, $priceToUse);
+
                     if (!$result) {
                         $success = false;
                         rdasLogToAddon('warning', "Failed to update {$type} price for {$extension} year {$year}");
@@ -420,16 +464,17 @@ function rdasUpdateDomainPricing($extension, $prices) {
                 }
             }
         }
-        
+
         // Cache the pricing data
         rdasCachePricingData($extension, $prices);
-        
+
         if ($success) {
-            rdasLogToAddon('info', "Successfully updated pricing for {$extension}");
+            $promoInfo = $promoActive ? " (promo for year {$promoTerms}, group: {$group})" : "";
+            rdasLogToAddon('info', "Successfully updated pricing for {$extension}{$promoInfo}");
         }
-        
+
         return $success;
-        
+
     } catch (Exception $e) {
         rdasLogToAddon('error', 'updateDomainPricing error: ' . $e->getMessage());
         return false;
@@ -438,22 +483,40 @@ function rdasUpdateDomainPricing($extension, $prices) {
 
 /**
  * Get domain ID from WHMCS database
+ * Returns the ID that has pricing entries (to handle duplicates)
  *
  * @param string $extension Domain extension
  * @return int|false Domain ID or false if not found
  */
 function rdasGetDomainId($extension) {
     try {
-        $query = "SELECT id FROM tbldomainpricing WHERE extension = ?";
-        $result = full_query($query, [$extension]);
-        
-        if ($result) {
+        // Sanitize extension to prevent SQL injection
+        $extension = mysql_real_escape_string(trim($extension));
+
+        // First, try to get the ID that already has pricing entries
+        // This handles cases where there are duplicate extensions
+        $query = "SELECT d.id FROM tbldomainpricing d
+                  INNER JOIN tblpricing p ON p.relid = d.id AND p.type = 'domainregister'
+                  WHERE d.extension = '{$extension}'
+                  LIMIT 1";
+        $result = full_query($query);
+
+        if ($result && mysql_num_rows($result) > 0) {
             $row = mysql_fetch_array($result);
             return intval($row['id']);
         }
-        
+
+        // Fallback: just get the first ID found
+        $query = "SELECT id FROM tbldomainpricing WHERE extension = '{$extension}' LIMIT 1";
+        $result = full_query($query);
+
+        if ($result && mysql_num_rows($result) > 0) {
+            $row = mysql_fetch_array($result);
+            return intval($row['id']);
+        }
+
         return false;
-        
+
     } catch (Exception $e) {
         rdasLogToAddon('error', 'getDomainId error: ' . $e->getMessage());
         return false;
@@ -462,12 +525,19 @@ function rdasGetDomainId($extension) {
 
 /**
  * Create new domain entry in WHMCS
+ * Checks for existing entry first to avoid duplicates
  *
  * @param string $extension Domain extension
- * @return int|false New domain ID or false on failure
+ * @return int|false Domain ID (existing or new) or false on failure
  */
 function rdasCreateDomainEntry($extension) {
     try {
+        // Check if extension already exists
+        $existingId = rdasGetDomainId($extension);
+        if ($existingId) {
+            return $existingId;
+        }
+
         $insertId = insert_query('tbldomainpricing', [
             'extension' => $extension,
             'dnsmanagement' => '0',
@@ -478,6 +548,45 @@ function rdasCreateDomainEntry($extension) {
         return $insertId ? (int)$insertId : false;
     } catch (Exception $e) {
         rdasLogToAddon('error', 'createDomainEntry error: ' . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * Update domain group in WHMCS
+ * Updates ALL entries with the same extension (handles duplicates)
+ *
+ * @param int $domainId Domain ID
+ * @param string $group Group name (e.g., 'Promo', 'Sale', or empty to clear)
+ * @return bool Success status
+ */
+function rdasUpdateDomainGroup($domainId, $group) {
+    try {
+        $domainId = intval($domainId);
+        $group = mysql_real_escape_string(trim($group));
+
+        // First get the extension for this domain
+        $getExtensionQuery = "SELECT extension FROM tbldomainpricing WHERE id = {$domainId} LIMIT 1";
+        $extResult = full_query($getExtensionQuery);
+
+        if ($extResult && mysql_num_rows($extResult) > 0) {
+            $extRow = mysql_fetch_array($extResult);
+            $extension = mysql_real_escape_string($extRow['extension']);
+
+            // Update ALL entries with this extension (handles duplicates)
+            $query = "UPDATE tbldomainpricing SET `group` = '{$group}' WHERE extension = '{$extension}'";
+            $result = full_query($query);
+
+            if ($result) {
+                rdasLogToAddon('info', "Updated group to '{$group}' for {$extension}");
+                return true;
+            }
+        }
+
+        return false;
+
+    } catch (Exception $e) {
+        rdasLogToAddon('error', 'updateDomainGroup error: ' . $e->getMessage());
         return false;
     }
 }
@@ -509,46 +618,36 @@ function rdasUpdateDomainPriceEntry($domainId, $type, $year, $price) {
         ];
 
         $column = $yearColumnMap[$year] ?? 'msetupfee';
+        $domainId = intval($domainId);
+        $price = floatval($price);
+        $currency = 1; // Default currency
 
-        // Map type to tblpricing type
-        $pricingType = 'domain' . $type; // domainregister, domainrenew, domaintransfer
+        // Map type to tblpricing type - validate to prevent SQL injection
+        $allowedTypes = ['domainregister', 'domainrenew', 'domaintransfer'];
+        $pricingType = 'domain' . $type;
+        if (!in_array($pricingType, $allowedTypes)) {
+            throw new Exception('Invalid pricing type');
+        }
 
-        // Check if pricing entry exists
-        $existing = select_query('tblpricing', 'id', [
-            'type' => $pricingType,
-            'currency' => 1,
-            'relid' => $domainId
-        ]);
+        // Check if pricing entry exists - include currency in check
+        $checkQuery = "SELECT id FROM tblpricing WHERE type = '{$pricingType}' AND relid = {$domainId} AND currency = {$currency} LIMIT 1";
+        $existing = full_query($checkQuery);
 
-        if (mysql_num_rows($existing) > 0) {
-            // Update existing - need to get the ID first
+        if ($existing && mysql_num_rows($existing) > 0) {
+            // Update existing
             $row = mysql_fetch_array($existing);
-            $pricingId = $row['id'];
+            $pricingId = intval($row['id']);
 
-            update_query('tblpricing', [$column => $price], ['id' => $pricingId]);
+            $updateQuery = "UPDATE tblpricing SET {$column} = {$price} WHERE id = {$pricingId}";
+            full_query($updateQuery);
+
+            rdasLogToAddon('info', "Updated {$pricingType} year {$year} ({$column}) = {$price} for domain ID {$domainId}");
         } else {
             // Insert new pricing entry
-            // First, create entry with all year prices set to -1 (not available)
-            $insertData = [
-                'type' => $pricingType,
-                'currency' => 1,
-                'relid' => $domainId,
-                'msetupfee' => -1,
-                'qsetupfee' => -1,
-                'ssetupfee' => -1,
-                'asetupfee' => -1,
-                'bsetupfee' => -1,
-                'tsetupfee' => 0,
-                'monthly' => -1,
-                'quarterly' => -1,
-                'semiannually' => -1,
-                'annually' => -1,
-                'biennially' => -1,
-                'triennially' => 0
-            ];
-            $insertData[$column] = $price;
+            $insertQuery = "INSERT INTO tblpricing (type, currency, relid, {$column}) VALUES ('{$pricingType}', {$currency}, {$domainId}, {$price})";
+            full_query($insertQuery);
 
-            insert_query('tblpricing', $insertData);
+            rdasLogToAddon('info', "Inserted {$pricingType} year {$year} ({$column}) = {$price} for domain ID {$domainId}");
         }
 
         return true;

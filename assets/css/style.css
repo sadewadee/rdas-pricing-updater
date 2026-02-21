@@ -806,6 +806,31 @@
   color: var(--rdas-error);
 }
 
+/* Badge */
+.rdas-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: var(--rdas-radius-full);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.rdas-badge-info {
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--rdas-info);
+}
+
+.rdas-badge-success {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--rdas-success);
+}
+
+.rdas-badge-warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--rdas-warning);
+}
+
 /* Action Buttons */
 .rdas-actions {
   display: flex;
